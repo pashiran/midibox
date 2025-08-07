@@ -4,9 +4,9 @@ import pretty_midi
 import ezdxf
 from ezdxf import units
 import os
+import glob
 
-#name of midi file to be processed. Name gets reused as dxf file name. Must be in subdirectory "midi/" in the same directory as python file 
-docName = 'midi/your_name.MID'
+# Process all midi files in the midi directory
 
 #all units in mm, must be float values
 distance_between_beats = 10.0 #distance at 120bpm
@@ -24,7 +24,7 @@ note_names_available = ['F3','G3','C4','D4','E4','F4','G4','A4','A#4','B4','C5',
 
 # -----------------------------------------END OF GLOBALS----------------------------------------------------------
 
-def main():
+def process_midi_file(docName):
     global distance_between_beats
     mid = MidiFile(docName)
 
@@ -73,79 +73,96 @@ def main():
     
     note_positions = list(filter(lambda item: item.velocity != 0 and item.x != -1 and item.msg_type != 'note_off', note_positions_unclean)) #remove midi notes represent the end of notes or don't exist in note_names_available
 
-    # midi_data = pretty_midi.PrettyMIDI(docName)
+    # Calculate the maximum width needed based on the last note position
+    if note_positions:
+        max_note_position = max(note.y for note in note_positions)
+        # Add paper_lead at the beginning and 20mm margin at the end
+        calculated_width = max_note_position + paper_lead + 20.0
+        print(f"Calculated width needed: {calculated_width:.1f}mm (last note at {max_note_position:.1f}mm)")
+    else:
+        calculated_width = paper_lead + 20.0
+        print("No valid notes found, using minimum width")
 
-    # for midiNote in midi_data:
-        
+    print(f"Processing {docName}: {len(note_positions)} notes")
+    
+    # Create a single DXF document for all notes
+    doc = ezdxf.new()
+    doc.units = units.MM
+    mspLines = doc.modelspace()
+    mspCircles = doc.modelspace()
+    doc.layers.add(name="Numbers", color=1)
 
-    # note_positions = []
-    print("Notes:", len(note_positions))
-    docs = []
     heightOffset = 0
-    widthOffset = 0
     strip_number = 0
-    i = 0
 
-    while i<len(note_positions):
-        docs.append(ezdxf.new())
-        docs[-1].units = units.MM
-        mspLines = docs[-1].modelspace()
-        mspCircles = docs[-1].modelspace()
-        docs[-1].layers.add(name="Numbers", color=1)
+    # Calculate how many strips fit in the paper height
+    max_strips = int(paper_max_height // strip_height)
+    
+    # Add note holes
+    for i, note_pos in enumerate(note_positions):
+        # All notes go on strip 0 since we're making one long strip
+        y_position = note_pos.y + paper_lead
+        mspCircles.add_circle((y_position, note_pos.x), hole_radius).rgb = (255, 0, 0)
 
-        heightOffset = 0
+    # Draw single strip boundary
+    # Add strip number to bottom corner
+    number = mspLines.add_text("0").set_placement((2, 3))
+    number.dxf.layer = "Numbers"
 
-        while(heightOffset+strip_height < paper_max_height and i < len(note_positions)):
+    # Left diagonal for first strip
+    mspLines.add_line((0, 0), (0, strip_height/2.5)).rgb = (255, 0, 0)
+    mspLines.add_line((0, strip_height/2.5), (10, strip_height)).rgb = (255, 0, 0)
+    
+    # Bottom line
+    mspLines.add_line((0, 0), (calculated_width, 0)).rgb = (255, 0, 0)
+    
+    # Right line
+    mspLines.add_line((calculated_width, 0), (calculated_width, strip_height)).rgb = (255, 0, 0)
+    
+    # Top line
+    mspLines.add_line((10, strip_height), (calculated_width, strip_height)).rgb = (255, 0, 0)
 
-            #add note holes
-            y_position = 0
-            while(i < len(note_positions) and y_position < paper_max_width):
-                y_position = note_positions[i].y-widthOffset+paper_lead
-                if y_position < paper_max_width:
-                    mspCircles.add_circle(((y_position), note_positions[i].x+heightOffset),hole_radius).rgb = (255, 0, 0)
-                    i += 1
-            
-            #add strip number to bottom corner
-            number = mspLines.add_text(strip_number).set_placement(
-                (2, 3+heightOffset)
-            )
+    print(f"Single strip, Single DXF file, Width: {calculated_width:.1f}mm")
 
-            number.dxf.layer = "Numbers"
+    # Create output directory if it doesn't exist
+    output_dir = 'output'
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+    
+    # Get base filename without path and extension
+    base_filename = os.path.splitext(os.path.basename(docName))[0]
+    
+    # Save single DXF file
+    output_filename = f"{output_dir}/{base_filename}.dxf"
+    doc.saveas(output_filename)
+    print(f"Saved: {output_filename}")
 
-            if (strip_number == 0):
-                #left diagonal
-                mspLines.add_line((0, heightOffset), (0, strip_height/2.5+heightOffset)).rgb = (255, 0, 0)
-                mspLines.add_line((0,strip_height/2.5+heightOffset), (10,strip_height+heightOffset)).rgb = (255, 0, 0)
-            else:
-                #left line
-                mspLines.add_line((0, heightOffset), (0, strip_height+heightOffset)).rgb = (255, 0, 0)
-            
-            #bottom line
-            mspLines.add_line((0, heightOffset), (paper_max_width, heightOffset)).rgb = (255, 0, 0)
-
-            #right diagonal
-            # mspLines.add_line((paper_max_width-10, heightOffset), (paper_max_width-10, strip_height/2.5+heightOffset)).rgb = (255, 0, 0)
-            # mspLines.add_line((paper_max_width-10, strip_height/2.5+heightOffset), (paper_max_width, strip_height+heightOffset)).rgb = (255, 0, 0)
-
-            mspLines.add_line((paper_max_width, heightOffset), (paper_max_width, heightOffset+strip_height)).rgb = (255, 0, 0)
-
-            #top line
-            if (strip_number == 0):
-                mspLines.add_line((10, heightOffset+strip_height), (paper_max_width, heightOffset+strip_height)).rgb = (255, 0, 0)
-            else:
-                mspLines.add_line((0, heightOffset+strip_height), (paper_max_width, heightOffset+strip_height)).rgb = (255, 0, 0)
-            
-
-            strip_number += 1
-            heightOffset += strip_height
-            widthOffset += paper_max_width
-
-    print("Number of Strips:",strip_number,"\nNumber of Pages:",len(docs))
-
-    #create and save dxf files
-    os.mkdir(docName[5:-4] + '_dxf_files/')
-    for i in range(len(docs)):
-        docs[i].saveas(docName[5:-4] + '_dxf_files/' + docName[5:-4] + '_' + str(i) + '.dxf')
+def main():
+    # Find all midi files in the midi directory
+    midi_files = []
+    for ext in ["*.mid", "*.MID", "*.midi", "*.MIDI"]:
+        midi_files.extend(glob.glob(f"midi/{ext}"))
+    
+    # Remove duplicates
+    midi_files = list(set(midi_files))
+    
+    if not midi_files:
+        print("No MIDI files found in the midi directory!")
+        return
+    
+    print(f"Found {len(midi_files)} MIDI file(s) to process:")
+    for file in midi_files:
+        print(f"  - {file}")
+    
+    # Process each midi file
+    for midi_file in midi_files:
+        try:
+            print(f"\n--- Processing {midi_file} ---")
+            process_midi_file(midi_file)
+        except Exception as e:
+            print(f"Error processing {midi_file}: {e}")
+    
+    print("\nAll files processed!")
 
     
 
